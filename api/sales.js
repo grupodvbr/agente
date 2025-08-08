@@ -5,7 +5,7 @@ export default async function handler(req, res) {
   try {
     const { de, ate } = req.query;
 
-    // Ajuste o endpoint conforme o real do Varejo Fácil
+    // Ajuste o endpoint conforme o real do Varejo Fácill
     const url = `${VF_BASE}/api/v1/vendas?dataInicial=${de}&dataFinal=${ate}`;
 
     const r = await fetch(url, {
