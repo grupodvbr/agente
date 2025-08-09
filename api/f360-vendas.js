@@ -6,12 +6,12 @@ async function main() {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json'
-        // coloque outros headers se precisar
+        // Coloque outros headers aqui, como token de autenticação
       }
     });
 
     const dados = await resposta.json();
-    console.log(dados); // Mostra no terminal
+    console.log('Retorno da API:', dados);
 
   } catch (erro) {
     console.error('Erro na API F360:', erro);
