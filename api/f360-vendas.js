@@ -3,7 +3,7 @@ import fetch from 'node-fetch';
 async function main() {
   try {
     // URL de teste para garantir que funciona
-    const resposta = await fetch('https://jsonplaceholder.typicode.com/todos/1', {
+    const resposta = await fetch('https://api.f360.com.br/v1/sales', {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json'
