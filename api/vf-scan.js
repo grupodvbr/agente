@@ -1,7 +1,4 @@
-function uniq(arr) {
-  return [...new Set(arr.filter(Boolean))];
-}
-
+function uniq(arr) { return [...new Set(arr.filter(Boolean))]; }
 function normalizeBases(baseFromEnv, baseFromQuery) {
   const base = (baseFromQuery || baseFromEnv || "").replace(/\/+$/, "");
   const noApi = base.replace(/\/api$/i, "");
@@ -10,98 +7,91 @@ function normalizeBases(baseFromEnv, baseFromQuery) {
 }
 
 export default async function handler(req, res) {
-  // ENV + override opcional via query (?base=https://seuhost/api)
-  const baseEnv = process.env.VF_BASE;            // ex: https://mercatto.varejofacil.com/api
+  const baseEnv = process.env.VF_BASE;           // ex: https://mercatto.varejofacil.com/api
   const baseQ   = (req.query.base || "").toString();
   const bases   = normalizeBases(baseEnv, baseQ);
 
   const user = process.env.VF_USER;
   const pass = process.env.VF_PASS;
 
-  // caminhos candidatos para "myself"
-  const myselfCandidates = uniq([
-    "/v1/myself",
-    "/myself",
-    "/v1/me",
-    "/me",
-    "/auth/me",
-    "/users/me",
-    "/v1/users/me",
-    "/v1/usuarios/me",
-    "/usuario/me",
+  const de  = req.query.de  || "2025-08-01";
+  const ate = req.query.ate || "2025-08-08";
+
+  // candidatos para vendas
+  const vendasCandidates = uniq([
+    // APIs prováveis
+    "/v1/vendas",
+    "/vendas",
+    "/integracao/v1/vendas",
+    "/api/v1/vendas",        // caso a base venha sem /api
+    // rotas "legadas" que vimos no site
+    "/resumoDeVendas/",
+    "/api/resumoDeVendas/",
   ]);
 
   const results = [];
 
   try {
     for (const base of bases) {
-      // 1) LOGIN nessa base
-      const authUrl = `${base}/auth`;
-      const authResp = await fetch(authUrl, {
+      // 1) login
+      const login = await fetch(`${base}/auth`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ username: user, password: pass }),
+        body: JSON.stringify({ username: user, password: pass })
       });
 
-      const setCookie = authResp.headers.get("set-cookie") || "";
-      const authText = await authResp.text();
-      let authJson; try { authJson = JSON.parse(authText); } catch {}
-      const token =
-        authJson?.accessToken || authJson?.token || authJson?.access_token;
+      const setCookie = login.headers.get("set-cookie") || "";
+      const loginTxt  = await login.text();
+      let j; try { j = JSON.parse(loginTxt); } catch {}
+      const token = j?.accessToken || j?.token || j?.access_token;
 
       results.push({
-        base,
-        step: "auth",
-        status: authResp.status,
-        ok: authResp.ok,
-        gotToken: Boolean(token),
-        gotCookie: Boolean(setCookie),
-        sample: authText.slice(0, 200),
+        base, step: "auth", status: login.status, ok: login.ok,
+        gotToken: Boolean(token), gotCookie: Boolean(setCookie),
+        sample: loginTxt.slice(0, 200)
       });
 
-      if (!authResp.ok || !token) {
-        // não conseguiu logar nessa base — tenta a próxima base
-        continue;
-      }
+      if (!login.ok || !token) continue;
 
-      // 2) testa cada path candidato
-      for (const path of myselfCandidates) {
-        const url = base.replace(/\/+$/, "") + path;
+      // 2) testa vendas
+      for (const path of vendasCandidates) {
+        const url = new URL(base.replace(/\/+$/, "") + path);
+        // quando a rota tem query padrão:
+        if (path.includes("resumoDeVendas")) {
+          url.searchParams.set("de",  de);
+          url.searchParams.set("ate", ate);
+        } else {
+          url.searchParams.set("dataInicial", de);
+          url.searchParams.set("dataFinal",   ate);
+        }
 
-        const headers = {
-          Accept: "application/json",
-          Authorization: token,      // << token PURO (sem "Bearer ")
-        };
+        const headers = { Accept: "application/json", Authorization: token };
         if (setCookie) headers.cookie = setCookie;
 
-        const r = await fetch(url, { headers });
+        const r    = await fetch(url.toString(), { headers });
         const body = await r.text();
 
         results.push({
-          base,
-          path,
-          status: r.status,
-          ok: r.ok,
+          base, path, url: url.toString(),
+          status: r.status, ok: r.ok,
           used: { tokenRaw: true, cookie: Boolean(setCookie) },
-          bodySample: body.slice(0, 250),
+          bodySample: body.slice(0, 400)
         });
 
-        // achou o caminho correto — já podemos parar
         if (r.ok) {
           return res.status(200).json({
-            found: { base, path },
-            hint: "Use esse base+path para as próximas chamadas (e o header Authorization com o token puro).",
-            results,
+            found: { base, path, url: url.toString() },
+            hint: "Use Authorization = <token> (sem 'Bearer') e estes parâmetros de datas.",
+            results
           });
         }
       }
     }
 
-    // nada bateu 200
     return res.status(200).json({
       found: null,
-      hint: "Nenhum path retornou 200. Confira se a base correta tem /api no final, e mande mais paths para testarmos.",
-      results,
+      hint: "Nenhum path de vendas retornou 200. Se tiver mais caminhos, me manda que eu adiciono aqui rapidinho.",
+      results
     });
   } catch (e) {
     return res.status(500).json({ error: String(e), results });
