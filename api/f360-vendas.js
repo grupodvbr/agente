@@ -2,11 +2,11 @@ import fetch from 'node-fetch';
 
 async function main() {
   try {
-    const resposta = await fetch('https://api.f360.com.br/sua-rota-aqui', {
+    // URL de teste para garantir que funciona
+    const resposta = await fetch('https://jsonplaceholder.typicode.com/todos/1', {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json'
-        // Coloque outros headers aqui, como token de autenticação
       }
     });
 
@@ -14,7 +14,7 @@ async function main() {
     console.log('Retorno da API:', dados);
 
   } catch (erro) {
-    console.error('Erro na API F360:', erro);
+    console.error('Erro na API:', erro);
   }
 }
 
