@@ -5,103 +5,141 @@ function ymd(date) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 function ontem() {
-  const d = new Date(); d.setDate(d.getDate() - 1);
+  const now = new Date();
+  const d = new Date(now);
+  d.setDate(d.getDate() - 1);
   const s = ymd(d);
   return { de: s, ate: s };
 }
 
-async function f360Login({ base, publicToken, timeoutMs }) {
-  const url = `${base.replace(/\/+$/, "")}/PublicLoginAPI/DoLogin`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    signal: controller.signal,
-    body: JSON.stringify({ token: publicToken }),
-  }).catch((e) => { throw new Error(`fetch login: ${e.name}`); });
-  clearTimeout(timer);
-
-  const raw = await r.text();
-  let data; try { data = JSON.parse(raw); } catch { /* às vezes volta string */ }
-
-  if (!r.ok) {
-    throw new Error(`login HTTP ${r.status} – raw=${raw?.slice(0,300)}`);
-  }
-  const jwt = data?.token || data?.accessToken || data; // doc varia o campo
-  if (!jwt || typeof jwt !== "string") {
-    throw new Error(`login ok, mas não veio JWT. payload=${raw?.slice(0,300)}`);
-  }
+async function f360Login() {
+  const baseUrl = process.env.VERCEL_URL
+    ? `https://${process.env.VERCEL_URL}`
+    : "http://localhost:3000";
+  const r = await fetch(`${baseUrl}/api/f360-login`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`Login F360 falhou com status ${r.status}`);
+  const j = await r.json();
+  const jwt = j?.jwt || j?.token || j?.accessToken;
+  if (!jwt || typeof jwt !== "string") throw new Error("JWT não retornado pelo login público do F360.");
   return jwt;
 }
 
 export default async function handler(req, res) {
-  try {
-    const BASE = process.env.F360_BASE || "https://financas.f360.com.br";
-    const PUBLIC_TOKEN = process.env.F360_PUBLIC_TOKEN;
-    const timeoutMs = +(process.env.F360_TIMEOUT_MS || 15000);
+try {
+    const {
+      F360_BASE = "",
+      F360_PATH_VENDAS = "/integracao/v1/vendas",
+      F360_KEY = "",
+      F360_BEARER = "",
+    } = process.env;
+    const { de: deQ, ate: ateQ } = req.query || {};
+    const { de, ate } = (deQ && ateQ) ? { de: deQ, ate: ateQ } : ontem();
 
-    if (!PUBLIC_TOKEN) {
-      return res.status(500).json({ error: "F360_PUBLIC_TOKEN ausente no ambiente." });
+    const { de, ate } = req.query;
+    if (!de || !ate) {
+      res.status(400).json({ error: "Parâmetros 'de' e 'ate' são obrigatórios (YYYY-MM-DD)." });
+      return;
     }
+    const BASE = process.env.F360_BASE || "https://financas.f360.com.br";
+    const timeout = +(process.env.F360_TIMEOUT_MS || 15000);
 
-    const { de: qDe, ate: qAte } = req.query || {};
-    const { de, ate } = (qDe && qAte) ? { de: qDe, ate: qAte } : ontem();
+    // Monta a URL do F360 (ajuste F360_BASE / F360_PATH_VENDAS nas envs se precisar)
+    const url = new URL(`${F360_BASE.replace(/\/+$/, "")}${F360_PATH_VENDAS}`);
+    url.searchParams.set("dataInicial", de);
+    url.searchParams.set("dataFinal", ate);
+    // 1) Login público → pega JWT
+    const jwt = await f360Login();
 
-    // 1) Login público → JWT
-    const jwt = await f360Login({ base: BASE, publicToken: PUBLIC_TOKEN, timeoutMs });
-
-    // 2) Parcelas de Cartões – tipo=Receita, tipoDatas=venda
+    // Monta os headers conforme o que você tiver configurado
+    const headers = {
+      Accept: "application/json",
+    };
+    if (F360_KEY) headers["Chave-Integracao"] = F360_KEY;
+    if (F360_BEARER) headers["Authorization"] = `Bearer ${F360_BEARER}`;
+    // 2) Lista Parcelas de Cartões (paginado, até 1000 por página segundo a doc)
+    // doc: GET /ParcelasDeCartoesPublicAPI/ListarParcelasDeCartoes?pagina=1&tipo=ambos|Receita&inicio=yyyy-MM-dd&fim=yyyy-MM-dd&tipoDatas=venda
     const url = new URL(`${BASE.replace(/\/+$/, "")}/ParcelasDeCartoesPublicAPI/ListarParcelasDeCartoes`);
     url.searchParams.set("pagina", "1");
-    url.searchParams.set("tipo", "Receita");
+    url.searchParams.set("tipo", "Receita");     // foca em recebimentos
     url.searchParams.set("inicio", de);
     url.searchParams.set("fim", ate);
-    url.searchParams.set("tipoDatas", "venda");
+    url.searchParams.set("tipoDatas", "venda");  // somar pelo dia da venda
 
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    const r = await fetch(url.toString(), {
-      headers: { "Authorization": `Bearer ${jwt}`, "Accept": "application/json" },
-      signal: controller.signal,
-    }).catch((e) => { throw new Error(`fetch parcelas: ${e.name}`); });
-    clearTimeout(timer);
+    // Faz o fetch com timeout defensivo
+const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    const timer = setTimeout(() => controller.abort(), timeout);
 
-    const raw = await r.text();
-    let data; try { data = JSON.parse(raw); } catch {}
+const r = await fetch(url.toString(), {
+      headers,
+      headers: {
+        "Authorization": `Bearer ${jwt}`,
+        "Accept": "application/json",
+      },
+signal: controller.signal,
+});
 
-    if (!r.ok) {
+clearTimeout(timer);
+
+    const contentType = r.headers.get("content-type") || "";
+    const isJson = contentType.includes("application/json");
+    const body = isJson ? await r.json().catch(() => null) : await r.text().catch(() => "");
+    const text = await r.text();
+    let data = null;
+    try { data = JSON.parse(text); } catch { /* pode vir HTML em erro */ }
+
+if (!r.ok) {
+      res.status(r.status).json({
+        error: "Falha ao consultar F360",
+        status: r.status,
       return res.status(r.status).json({
         error: "Falha ao consultar F360 (ParcelasDeCartoes)",
-        requestedUrl: url.toString(),
+requestedUrl: url.toString(),
+        usedHeaders: {
+          ...(F360_KEY ? { "Chave-Integracao": "****" } : {}),
+          ...(F360_BEARER ? { Authorization: "Bearer ****" } : {}),
+          Accept: "application/json",
+        },
+        raw: body,
         status: r.status,
-        raw: raw?.slice(0, 1000),
-      });
-    }
+        raw: text?.slice(0, 4000),
+});
+      return;
+}
 
-    // payload pode vir como { Itens: [...] } ou só [...]
-    const itens = Array.isArray(data?.Itens) ? data.Itens
-                : Array.isArray(data?.itens) ? data.itens
-                : Array.isArray(data) ? data : [];
-
+    // 🔎 Ajuste este "parse" conforme o formato real que o F360 retorna
+    // Aqui eu só retorno o payload na íntegra + um resumo amigável
+    res.status(200).json({
+    // 3) Somatório — ajuste o campo conforme o payload real (ValorLiquido, ValorBruto etc.)
+    const itens = Array.isArray(data?.Itens || data?.itens || data) ? (data.Itens || data.itens || data) : [];
     let totalLiquido = 0, totalBruto = 0, qtd = 0;
+
     for (const p of itens) {
-      const vl = Number(p?.ValorLiquido ?? p?.valorLiquido ?? p?.valor_liquido ?? p?.liquido ?? p?.valor ?? 0);
-      const vb = Number(p?.ValorBruto   ?? p?.valorBruto   ?? p?.valor_bruto   ?? p?.bruto   ?? 0);
+      // Nomes variam — tentamos cobrir os mais comuns:
+      const vl = Number(
+        p?.ValorLiquido ?? p?.valorLiquido ?? p?.valor_liquido ?? p?.liquido ?? p?.valor || 0
+      );
+      const vb = Number(
+        p?.ValorBruto ?? p?.valorBruto ?? p?.valor_bruto ?? p?.bruto ?? 0
+      );
       if (!Number.isNaN(vl)) totalLiquido += vl;
-      if (!Number.isNaN(vb)) totalBruto   += vb;
+      if (!Number.isNaN(vb)) totalBruto += vb;
       qtd++;
     }
 
     return res.status(200).json({
-      periodo: { de, ate },
-      fonte: "F360 ParcelasDeCartoes",
+periodo: { de, ate },
+      fonte: "F360",
+      payload: body,
+      fonte: "F360 (ParcelasDeCartoesPublicAPI)",
       qtdParcelas: qtd,
-      totalLiquido: +totalLiquido.toFixed(2),
-      totalBruto: +totalBruto.toFixed(2),
-      // debugRaw: data, // habilite se quiser ver o payload
-    });
+      totalLiquido: Number(totalLiquido.toFixed(2)),
+      totalBruto: Number(totalBruto.toFixed(2)),
+      // payload: data, // descomente se quiser ver o bruto
+});
   } catch (err) {
-    return res.status(500).json({ error: String(err) });
-  }
+    res.status(500).json({ error: err?.name === "AbortError" ? "timeout" : String(err) });
+  } catch (e) {
+    return res.status(500).json({ error: String(e) });
+}
 }
