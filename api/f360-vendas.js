@@ -2,37 +2,19 @@ import fetch from 'node-fetch';
 
 export default async function handler(req, res) {
   try {
-    const baseUrl = process.env.F360_BASE;
-    const publicToken = process.env.F360_PUBLIC_TOKEN;
-
-    // 1. Login
-    const loginResponse = await fetch(`${baseUrl}/Login/Autenticar`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Token: publicToken })
-    });
-
-    const loginData = await loginResponse.json();
-
-    if (!loginData.Token) {
-      return res.status(400).json({ error: 'Falha no login F360', response: loginData });
-    }
-
-    const jwt = loginData.Token; // pega o Token retornado
-
-    // 2. Buscar vendas
-    const { de, ate } = req.query;
-    const vendasResponse = await fetch(`${baseUrl}/Vendas?dataInicial=${de}&dataFinal=${ate}`, {
+    const resposta = await fetch('https://api.f360.com.br/sua-rota-aqui', {
+      method: 'GET',
       headers: {
-        'Authorization': `Bearer ${jwt}`,
         'Content-Type': 'application/json'
+        // coloque outros headers se precisar
       }
     });
 
-    const vendasData = await vendasResponse.json();
-    res.status(200).json(vendasData);
+    const dados = await resposta.json();
+    res.status(200).json(dados);
 
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+  } catch (erro) {
+    console.error('Erro na API F360:', erro);
+    res.status(500).json({ erro: 'Erro ao buscar dados' });
   }
 }
