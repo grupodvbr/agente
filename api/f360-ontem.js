@@ -1,38 +1,38 @@
-function ymd(d) {
-  return d.toISOString().slice(0,10);
+function toYMD(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 export default async function handler(req, res) {
+  const hoje = new Date();
+  const ontemDate = new Date(hoje);
+  ontemDate.setDate(hoje.getDate() - 1);
+
+  const de = toYMD(ontemDate);
+  const ate = toYMD(ontemDate);
+
+  const baseUrl = new URL(req.url, `http://${req.headers.host}`);
+  baseUrl.pathname = "/api/f360-vendas";
+  baseUrl.search = `?de=${de}&ate=${ate}`;
+
   try {
-    const hoje = new Date();
-    const ontem = new Date(hoje);
-    ontem.setDate(hoje.getDate() - 1);
+    const r = await fetch(baseUrl.toString());
+    const data = await r.json();
 
-    const de = ymd(ontem);
-    const ate = ymd(ontem);
-
-    const baseUrl = `${req.headers["x-forwarded-proto"] || "https"}://${req.headers.host}`;
-    const url = `${baseUrl}/api/f360-vendas?de=${de}&ate=${ate}`;
-
-    const r = await fetch(url);
-    const payload = await r.json();
-
-    // 🔁 Ajuste abaixo conforme a estrutura que o F360 retorna para “vendas”
-    let total = 0;
-    const itens = Array.isArray(payload?.data) ? payload.data : [];
-    for (const venda of itens) {
-      // Ex.: venda.total, venda.valor, venda.valorLiquido... confirme pelo JSON real
-      const v = Number(venda?.total || venda?.valor || 0);
-      total += isNaN(v) ? 0 : v;
+    if (!r.ok) {
+      res.status(r.status).json(data);
+      return;
     }
 
-    return res.status(200).json({
+    // Aqui você pode somar os valores do payload (quando souber o formato)
+    res.status(200).json({
       periodo: { de, ate },
-      totalVendido: total,
-      bruto: total, // ajuste se tiver campo líquido
-      fonte: "F360"
+      fonte: "F360",
+      totalVendido: 0, // ajuste quando souber onde está o total
+      bruto: 0,        // idem
+      payload: data.payload, // retornamos também o payload bruto
     });
   } catch (e) {
-    return res.status(500).json({ error: e.message || String(e) });
+    res.status(500).json({ error: String(e) });
   }
 }
