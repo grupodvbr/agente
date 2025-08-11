@@ -1,0 +1,14 @@
+{
+  "name": "assistente-dv",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo \"Edge Functions build by Vercel\"",
+    "start": "vercel dev"
+  },
+  "dependencies": {
+    "openai": "^4.67.2",
+    "zod": "^3.23.8"
+  }
+}
